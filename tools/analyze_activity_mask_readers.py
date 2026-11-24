@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Recover raw activity-mask getter/read sites from MMU.exe.
+
+FUN_00507ec0() returns the activity mask held at manager +0. Direct callers test
+that value with literal masks (`cmp eax,imm`, `and/test eax,imm`) or intersect it
+with another mask held by the caller (`test [obj+0x9c],eax`, `test esi,eax`).
+This analyzer records the raw test form, literal value where present, containing
+function, vtable owner when known, and nearby state/cue evidence.
+
+No gameplay semantics are inferred from a mask value or from the object field
+used in a dynamic intersection.
+
+Outputs:
+  docs/activity_mask_readers.txt
+  core/include/mmu/core/ActivityMaskReaderTable.h
+"""
+
+import os
+import re
+import struct
+import sys
+
+from capstone import CS_ARCH_X86, CS_MODE_32, Cs
+
+from analyze_activity_masks import (
+    DECOMPILED_DIR,
+    GETTER_VA,
+    MANAGER_GLOBAL_VA,
+    PROJECT_ROOT,
+    SETTER_VA,
+    find_function_start,
+    parse_decompiled_strings,
+    parse_state_graph,
+    parse_vtable_owners,
+)
+from analyze_rtti import PE
+
+REPORT_PATH = os.path.join(PROJECT_ROOT, "docs", "activity_mask_readers.txt")
+HEADER_PATH = os.path.join(
+    PROJECT_ROOT, "core", "include", "mmu", "core",
+    "ActivityMaskReaderTable.h")
+
+MD = Cs(CS_ARCH_X86, CS_MODE_32)
+MD.skipdata = True
+MD.detail = True
+
+EAX_RE = re.compile(r"\beax\b", re.IGNORECASE)
+
+
+def parse_int(text):
+    try:
+        return int(text, 0) & 0xFFFFFFFF
+    except ValueError:
+        return None
+
+
+def collect_call_sites(pe):
+    text = next(section for section in pe.sections if section[0] == ".text")
+    _name, _rva, _vsize, raw_offset, raw_size = text
+    sites = []
+    for offset in range(raw_offset, raw_offset + raw_size - 5):
+        if pe.data[offset] != 0xE8:
+            continue
+        displacement = struct.unpack_from("<i", pe.data, offset + 1)[0]
+        rva = pe.off_to_rva(offset)
+        if rva is None:
+            continue
+        site = pe.image_base + rva
+        if site + 5 + displacement == GETTER_VA:
+            sites.append(site)
+    return sorted(set(sites))
+
+
+def parse_test(pe, call_va):
+    """Return (kind, mask, operand_text) for the first use of getter EAX."""
+    offset = pe.rva_to_off(call_va - pe.image_base)
+    if offset is None:
+        return ("Unknown", 0, "")
+    return_address = call_va + 5
+    instructions = list(
+        MD.disasm(pe.data[offset + 5:offset + 5 + 96], return_address))[:16]
+    for instruction in instructions:
+        mnemonic = instruction.mnemonic
+        operand = instruction.op_str.replace(" ", "")
+        if mnemonic not in ("cmp", "test", "and") or not EAX_RE.search(operand):
+            continue
+        parts = [part for part in operand.split(",") if part]
+        if len(parts) != 2:
+            continue
+        left, right = parts
+        left_is_eax = EAX_RE.fullmatch(left) is not None
+        right_is_eax = EAX_RE.fullmatch(right) is not None
+        if mnemonic == "cmp" and left_is_eax and parse_int(right) is not None:
+            return ("Equal", parse_int(right), instruction.op_str)
+        if mnemonic in ("test", "and") and left_is_eax:
+            immediate = parse_int(right)
+            if immediate is not None:
+                return ("Bit", immediate, instruction.op_str)
+        if mnemonic == "test" and left_is_eax and right_is_eax:
+            return ("NonZero", 0, instruction.op_str)
+        if mnemonic in ("test", "and") and (left_is_eax or right_is_eax):
+            return ("Intersect", 0, instruction.op_str)
+        if mnemonic == "cmp" and right_is_eax:
+            return ("DynamicEqual", 0, instruction.op_str)
+    return ("Unknown", 0, "")
+
+
+def collect_rows(pe):
+    owners = parse_vtable_owners()
+    states = parse_state_graph()
+    rows = []
+    for call_va in collect_call_sites(pe):
+        kind, mask, operand = parse_test(pe, call_va)
+        function_va = find_function_start(pe, call_va)
+        owner_rows = owners.get(function_va, [])
+        if owner_rows:
+            owner, slot = owner_rows[0]
+        else:
+            owner, slot = "", 0xFFFF
+        state_rows = states.get(function_va, [])
+        state_evidence = ",".join(sorted({"%s:%s" % (kind_name, name)
+                                          for _cls, _slot, kind_name, name
+                                          in state_rows}))
+        rows.append({
+            "functionVa": function_va,
+            "callVa": call_va,
+            "kind": kind,
+            "mask": mask,
+            "operand": operand,
+            "owner": owner,
+            "slot": slot,
+            "stateEvidence": state_evidence,
+            "strings": parse_decompiled_strings(function_va),
+        })
+    return rows
+
+
+def escape(value):
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def write_report(rows):
+    kinds = {}
+    for row in rows:
+        kinds[row["kind"]] = kinds.get(row["kind"], 0) + 1
+    with open(REPORT_PATH, "w", encoding="latin1") as out:
+        out.write("Generated by tools/analyze_activity_mask_readers.py\n")
+        out.write("Source: direct calls to FUN_00507ec0() in MMU.exe.\n")
+        out.write("setter=0x%06x getter=0x%06x manager=[0x%06x]\n" % (
+            SETTER_VA, GETTER_VA, MANAGER_GLOBAL_VA))
+        out.write("sites=%d kinds=%s\n\n" % (
+            len(rows),
+            " ".join("%s:%u" % (kind, kinds[kind]) for kind in sorted(kinds))))
+        for row in rows:
+            owner = row["owner"] or "-"
+            slot = ("" if row["slot"] == 0xFFFF
+                    else " slot=%u" % row["slot"])
+            mask = "-" if row["kind"] in ("Intersect", "DynamicEqual",
+                                          "NonZero", "Unknown") else (
+                                              "0x%x" % row["mask"])
+            operand = row["operand"] or "-"
+            state = row["stateEvidence"] or "-"
+            strings = "|".join(row["strings"]) or "-"
+            out.write(
+                "func=0x%06x call=0x%06x kind=%-13s mask=%-10s operand='%s' "
+                "owner=%s%s states=%s strings=%s\n" % (
+                    row["functionVa"], row["callVa"], row["kind"], mask,
+                    escape(operand), owner, slot, state, strings))
+
+
+def write_header(rows):
+    with open(HEADER_PATH, "w", encoding="latin1") as out:
+        out.write("#pragma once\n\n")
+        out.write('#include "mmu/core/Types.h"\n\n')
+        out.write("#include <cstddef>\n#include <string_view>\n\n")
+        out.write("namespace mmu {\n\n")
+        out.write("// Generated by tools/analyze_activity_mask_readers.py.\n")
+        out.write("// FUN_00507ec0() reads the activity mask from manager +0. Each\n")
+        out.write("// row records the raw test immediately following a direct call:\n")
+        out.write("// Equal compares the mask to a literal, Bit tests a literal bit,\n")
+        out.write("// Intersect combines it with a caller-held mask, NonZero tests\n")
+        out.write("// the whole value, and DynamicEqual compares it to a caller-held\n")
+        out.write("// value. No gameplay meaning is inferred from the mask or field.\n")
+        out.write("enum class ActivityMaskReadKind : u8 {\n")
+        out.write("    Equal,\n")
+        out.write("    Bit,\n")
+        out.write("    Intersect,\n")
+        out.write("    DynamicEqual,\n")
+        out.write("    NonZero,\n")
+        out.write("    Unknown,\n")
+        out.write("};\n\n")
+        out.write("struct RecoveredActivityMaskRead {\n")
+        out.write("    u32 functionVa;\n")
+        out.write("    u32 callVa;\n")
+        out.write("    ActivityMaskReadKind kind;\n")
+        out.write("    u32 mask;\n")
+        out.write("    std::string_view operand;\n")
+        out.write("    std::string_view owner;\n")
+        out.write("    u16 slot;\n")
+        out.write("    std::string_view stateEvidence;\n")
+        out.write("    std::string_view decompiledStrings;\n")
+        out.write("};\n\n")
+        out.write("inline constexpr RecoveredActivityMaskRead "
+                   "kRecoveredActivityMaskReads[] = {\n")
+        for row in rows:
+            out.write(
+                "    {0x%06xu, 0x%06xu, ActivityMaskReadKind::%s, 0x%08xu, "
+                "\"%s\", \"%s\", 0x%04xu, \"%s\", \"%s\"},\n" % (
+                    row["functionVa"], row["callVa"], row["kind"],
+                    row["mask"], escape(row["operand"]),
+                    escape(row["owner"]), row["slot"],
+                    escape(row["stateEvidence"]),
+                    escape("|".join(row["strings"]))))
+        out.write("};\n")
+        out.write("inline constexpr std::size_t kRecoveredActivityMaskReadCount =\n")
+        out.write("    sizeof(kRecoveredActivityMaskReads) /\n")
+        out.write("    sizeof(kRecoveredActivityMaskReads[0]);\n\n")
+        out.write("inline const RecoveredActivityMaskRead* "
+                   "findActivityMaskRead(u32 callVa) {\n")
+        out.write("    for (const auto& row : kRecoveredActivityMaskReads)\n")
+        out.write("        if (row.callVa == callVa) return &row;\n")
+        out.write("    return nullptr;\n}\n\n")
+        out.write("inline std::size_t countActivityMaskReads(\n")
+        out.write("    ActivityMaskReadKind kind) {\n")
+        out.write("    std::size_t count = 0;\n")
+        out.write("    for (const auto& row : kRecoveredActivityMaskReads)\n")
+        out.write("        if (row.kind == kind) ++count;\n")
+        out.write("    return count;\n")
+        out.write("}\n\n")
+        out.write("// Mirrors the recovered test form only. Dynamic operands are\n")
+        out.write("// supplied by the caller; a zero dynamic mask cannot satisfy an\n")
+        out.write("// intersection or equality test.\n")
+        out.write("inline bool evaluateActivityMaskRead(\n")
+        out.write("    const RecoveredActivityMaskRead& row, u32 activityMask,\n")
+        out.write("    u32 dynamicMask = 0) {\n")
+        out.write("    switch (row.kind) {\n")
+        out.write("    case ActivityMaskReadKind::Equal:\n")
+        out.write("        return activityMask == row.mask;\n")
+        out.write("    case ActivityMaskReadKind::Bit:\n")
+        out.write("        return (activityMask & row.mask) != 0;\n")
+        out.write("    case ActivityMaskReadKind::Intersect:\n")
+        out.write("        return dynamicMask != 0 &&\n")
+        out.write("               (activityMask & dynamicMask) != 0;\n")
+        out.write("    case ActivityMaskReadKind::DynamicEqual:\n")
+        out.write("        return dynamicMask != 0 && activityMask == dynamicMask;\n")
+        out.write("    case ActivityMaskReadKind::NonZero:\n")
+        out.write("        return activityMask != 0;\n")
+        out.write("    case ActivityMaskReadKind::Unknown:\n")
+        out.write("        break;\n")
+        out.write("    }\n")
+        out.write("    return false;\n")
+        out.write("}\n\n")
+        out.write("} // namespace mmu\n")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    pe = PE(open(sys.argv[1], "rb").read())
+    if pe.image_base != 0x400000:
+        raise RuntimeError("unexpected image base 0x%x" % pe.image_base)
+    rows = collect_rows(pe)
+    if not rows:
+        raise RuntimeError("no activity-mask getter calls found")
+    write_report(rows)
+    write_header(rows)
+    print("sites=%d report=%s header=%s" % (
+        len(rows), REPORT_PATH, HEADER_PATH))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

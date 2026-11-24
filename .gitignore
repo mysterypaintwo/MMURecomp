@@ -1,32 +1,303 @@
+# ==========================================
+# Converted assets
+# ==========================================
+*.pak
+
+# ==========================================
+# C++ / Compiled binaries
+# ==========================================
+
 # Prerequisites
 *.d
 
-# Compiled Object files
+# Compiled object files
 *.slo
 *.lo
 *.o
 *.obj
 
-# Precompiled Headers
+# Precompiled headers
 *.gch
 *.pch
 
-# Compiled Dynamic libraries
+# Linker files
+*.ilk
+
+# Debugger and symbol files
+*.pdb
+*.dwo
+*.dSYM/
+*.sym
+*.debug
+
+# Compiled dynamic libraries
 *.so
+*.so.*
 *.dylib
 *.dll
+*.dll.*
+*.bundle
 
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
+# Compiled static libraries
 *.lai
 *.la
 *.a
 *.lib
 
-# Executables
+# Executables and application bundles
 *.exe
 *.out
-*.app
+*.app/
+*.AppImage
+
+# Windows debug / build artifacts
+*.exp
+*.idb
+*.ipch
+*.pch
+*.obj
+*.manifest
+*.msi
+*.msm
+*.cab
+
+# Linux build artifacts
+*.ko
+*.mod.c
+*.cmd
+Module.symvers
+modules.order
+
+# ==========================================
+# Build systems
+# ==========================================
+
+# Build directories
+[Bb]uild/
+[Bb]uild-*/
+[Bb]uild-switch2/
+cmake-build-*/
+out/
+bin/
+obj/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+
+# Autotools
+.deps/
+.libs/
+autom4te.cache/
+config.log
+config.status
+libtool
+aclocal.m4
+
+# ==========================================
+# Package managers
+# ==========================================
+
+# vcpkg
+vcpkg_installed/
+
+# ==========================================
+# Temporary files and logs
+# ==========================================
+
+*.tmp
+*.temp
+*.log
+*.bak
+*.swp
+*.swo
+*.orig
+*~
+
+# Test output and cache
+Testing/
+.cache/
+
+# ==========================================
+# macOS
+# ==========================================
+
+# General
+.DS_Store
+.localized
+__MACOSX/
+.AppleDouble
+.LSOverride
+Icon[?]
+
+# Resource forks
+._*
+
+# Volume metadata
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.com.apple.timemachine.supported
+.PKInstallSandboxManager
+.PKInstallSandboxManager-SystemSoftware
+.hotfiles.btree
+.vol
+.file
+.disk_label*
+lost+found
+
+# Remote AFP shares
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Mac OS 6 to 9
+Desktop DB
+Desktop DF
+TheFindByContentFolder
+TheVolumeSettingsFolder
+.FBCIndex
+.FBCSemaphoreFile
+.FBCLockFolder
+
+# Quota system
+.quota.group
+.quota.user
+.quota.ops.group
+.quota.ops.user
+
+# Time Machine
+Backups.backupdb
+.MobileBackups
+.MobileBackups.trash
+MobileBackups.trash
+tmbootpicker.efi
+
+# ==========================================
+# Windows
+# ==========================================
+
+# Explorer
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Windows indexing
+$WINDOWS.~BT/
+$Windows.~WS/
+
+# Windows crash dumps
+*.dmp
+*.stackdump
+
+# ==========================================
+# Linux
+# ==========================================
+
+# Desktop environments
+.directory
+.Trash-*/
+.Trash-*/
+.nfs*
+
+# ==========================================
+# IDEs and editors
+# ==========================================
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio Code
+.vscode/
+
+# JetBrains
+.idea/
+
+
+# ==========================================
+# Ghidra
+# ==========================================
+
+# Ghidra project files
+*.rep/
+*.lock
+*.lock~
+
+# Ghidra project databases
+*.gpr
+*.gpr.lock
+*.prp
+
+# Ghidra temporary / cache files
+.ghidra/
+ghidra.log
+ghidra.log.*
+*.tmp~
+
+# ==========================================
+# Claude AI / Claude Code
+# ==========================================
+
+# Local Claude Code configuration
+.claude/settings.local.json
+
+# Claude Code local state and caches
+.claude/cache/
+.claude/debug/
+.claude/file-history/
+.claude/paste-cache/
+.claude/plans/
+.claude/projects/
+.claude/session-env/
+.claude/shell-snapshots/
+.claude/statsig/
+.claude/todos/
+
+# Claude Code temporary files
+.claude/*.tmp
+.claude/*.log
+
+# ==========================================
+# OpenCode AI
+# ==========================================
+
+# Local configuration
+.opencode/settings.local.json
+
+# OpenCode local data
+.opencode/cache/
+.opencode/sessions/
+.opencode/logs/
+.opencode/storage/
+.opencode/state/
+
+# Environment / local secrets
+.opencode/.env
+.opencode/.env.*
+
+# ==========================================
+# AI tool local environment files
+# ==========================================
+
+.env
+.env.*
+!.env.example

@@ -1,0 +1,71 @@
+syntax = "proto2";
+
+package mmu;
+
+message SavedGame {
+  repeated mmu.SavedGameSlot slots = 1;
+  optional bool completed_easy = 2 [default = false];
+  optional bool completed_normal = 3 [default = false];
+  optional bool completed_insta_kill = 4 [default = false];
+  optional int32 endless_currentscore = 5 [default = 0];
+  optional int32 endless_hiscore = 6 [default = 0];
+  optional int32 endless_boss_currentscore = 7 [default = 0];
+  optional int32 endless_boss_hiscore = 8 [default = 0];
+  optional bool defeated_whirlpoolman = 9 [default = false];
+  optional bool use_charge_shot = 10 [default = false];
+  optional int32 defeated_supernailman = 11 [default = 0];
+  optional int32 defeated_supertankman = 12 [default = 0];
+  optional int32 defeated_superjetman = 13 [default = 0];
+  optional int32 defeated_superglueman = 14 [default = 0];
+  optional int32 defeated_supertrinitroman = 15 [default = 0];
+  optional int32 defeated_superrainbowman = 16 [default = 0];
+  optional int32 defeated_superyoyoman = 17 [default = 0];
+  optional int32 defeated_supercometwoman = 18 [default = 0];
+  optional int32 defeated_superyokuman = 19 [default = 0];
+  optional int32 defeated_superwhirlpoolman = 20 [default = 0];
+  optional int32 defeated_perfectnailman = 21 [default = 0];
+  optional int32 defeated_perfecttankman = 22 [default = 0];
+  optional int32 defeated_perfectjetman = 23 [default = 0];
+  optional int32 defeated_perfectglueman = 24 [default = 0];
+  optional int32 defeated_perfecttrinitroman = 25 [default = 0];
+  optional int32 defeated_perfectrainbowman = 26 [default = 0];
+  optional int32 defeated_perfectyoyoman = 27 [default = 0];
+  optional int32 defeated_perfectcometwoman = 28 [default = 0];
+  optional int32 defeated_perfectyokuman = 29 [default = 0];
+  optional int32 defeated_perfectwhirlpoolman = 30 [default = 0];
+  optional bool completed_easy_zero = 31 [default = false];
+  optional bool completed_normal_zero = 32 [default = false];
+  optional bool completed_insta_kill_zero = 33 [default = false];
+  optional int32 endless_zero_currentscore = 34 [default = 0];
+  optional int32 endless_zero_hiscore = 35 [default = 0];
+  optional int32 endless_boss_zero_currentscore = 36 [default = 0];
+  optional int32 endless_boss_zero_hiscore = 37 [default = 0];
+  optional int32 gauntlet_currentscore = 38 [default = 0];
+  optional int32 gauntlet_hiscore = 39 [default = 0];
+  optional int32 gauntlet_zero_currentscore = 40 [default = 0];
+  optional int32 gauntlet_zero_hiscore = 41 [default = 0];
+  optional double gauntlet_play_time = 42;
+  optional double gauntlet_play_time_hiscore = 43;
+  optional double gauntlet_play_time_zero_hiscore = 44;
+}
+
+message SavedGameSlot {
+  optional int32 yoku_letters = 1;
+  optional int32 nb_beats = 2;
+  optional int32 nb_eddies = 3;
+  optional int32 nb_spike_shields = 4;
+  optional int32 nb_energy_balancers = 5;
+  optional int32 nb_e_tanks = 6;
+  optional int32 nb_w_tanks = 7;
+  optional int32 nb_bolts = 8;
+  optional int32 nb_small_e_tanks = 9;
+  optional int32 nb_extra_lives = 10;
+  optional double play_time = 11;
+  optional int32 story_progress = 12;
+  repeated int32 acquired_weapon_id = 13;
+  required bool slot_filled = 14;
+  repeated bool acquired_weapon = 15;
+  optional int32 signature = 16;
+  optional int32 difficulty = 17 [default = 1];
+  optional bool playing_as_zero = 18 [default = false];
+}

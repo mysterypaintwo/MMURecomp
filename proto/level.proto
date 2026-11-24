@@ -1,0 +1,26 @@
+syntax = "proto2";
+
+package mmu;
+
+message GameSpawnObject {
+  optional float x = 1;
+  optional float y = 2;
+  optional bool facingRight = 3;
+  optional bool respawnOnDeath = 4;
+  optional bool respawnOnScreen = 5;
+  optional bool deleteOffScreen = 6;
+  optional bool collectible = 7;
+  optional float autoRespawn = 8;
+  optional string type = 9;
+  optional string attr1 = 10;
+  optional string attr2 = 11;
+}
+
+message Scene {
+  repeated mmu.GameSpawnObject gameobjects = 1;
+  required uint32 key = 2;
+}
+
+message Level {
+  repeated mmu.Scene scene = 1;
+}

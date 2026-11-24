@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Recover compound GameParam names with a meet-in-the-middle CRC attack.
+
+The recovered hash (MMU.exe 0x43c010) is linear over GF(2) with init 0 and no
+final XOR. Appending a byte S to a string with hash H is
+
+    H' = ((H << 8) & 0xffffffff) ^ REDUCE[H >> 24] ^ CONTRIB[S]
+
+Therefore, if NAME = PREFIX + SUFFIX and both parts have known lengths,
+
+    H(PREFIX) = INV_SHIFT_len(SUFFIX)( H(NAME) ^ H(SUFFIX) )
+
+The inverse shift is also a table lookup, so a dictionary of prefix hashes can
+be tested against every key and every suffix without rehashing the whole name.
+Only exact full-hash matches are reported.
+
+Usage: python3 tools/mitm_key_names.py [Assets/] [docs/key_names_mitm.txt]
+"""
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from crack_hash import KNOWN_KEY_NAMES, collect_keys, mmu_crc32
+from sweep_key_names import PREFIXES, SUFFIXES, WORDS
+
+
+def _step(value, bit):
+    top = value & 0x80000000
+    value = ((value << 1) | bit) & 0xffffffff
+    return value ^ 0x04c11db7 if top else value
+
+
+def _eight(value, byte):
+    for i in range(7, -1, -1):
+        value = _step(value, (byte >> i) & 1)
+    return value
+
+
+REDUCE = [_eight(b << 24, 0) for b in range(256)]
+CONTRIB = [_eight(0, b) for b in range(256)]
+
+
+def hash_bytes(data):
+    value = 0
+    for byte in data:
+        value = (((value << 8) & 0xffffffff) ^ REDUCE[value >> 24] ^ CONTRIB[byte])
+    return value
+
+
+def shift(value, count):
+    """Shift a hash forward by `count` zero bytes."""
+    for _ in range(count):
+        value = ((value << 8) & 0xffffffff) ^ REDUCE[value >> 24]
+    return value
+
+
+# y = ((x << 8) & 0xffffffff) ^ REDUCE[x >> 24]; the low byte of the first term
+# is zero, so REDUCE[x >> 24]'s low byte must equal y's low byte. Bucket the
+# 256 possibilities and verify the recovered top byte.
+_BUCKETS = {}
+for _a in range(256):
+    _BUCKETS.setdefault(REDUCE[_a] & 0xff, []).append(_a)
+
+
+def _inv_shift_byte(value):
+    for a in _BUCKETS.get(value & 0xff, ()):
+        candidate = ((value ^ REDUCE[a]) >> 8) | (a << 24)
+        if (candidate >> 24) == a:
+            return candidate
+    raise AssertionError(hex(value))
+
+
+def inv_shift(value, count):
+    for _ in range(count):
+        value = _inv_shift_byte(value)
+    return value
+
+
+def verify_tables():
+    import random
+    rng = random.Random(0x4d4d55)
+    for _ in range(200):
+        data = bytes(rng.randrange(256) for _ in range(rng.randrange(1, 12)))
+        assert hash_bytes(data) == mmu_crc32(data), data
+        for count in range(1, 5):
+            tail = bytes(rng.randrange(256) for _ in range(count))
+            combined = hash_bytes(data + tail)
+            assert shift(hash_bytes(data), count) ^ hash_bytes(tail) == combined
+            assert inv_shift(combined ^ hash_bytes(tail), count) == hash_bytes(data)
+
+
+def harvest():
+    """Only curated gameplay vocabulary: a broad binary-string dictionary has
+    so many two-token combinations that CRC collisions dominate the results."""
+    words = set()
+    for token in PREFIXES + SUFFIXES + WORDS + list(KNOWN_KEY_NAMES.values()):
+        words.update(part.lower() for part in token.split('_') if part.isalpha())
+    return sorted(words)
+
+
+def prefixes(words, two_token):
+    """Yield (hash, spelled_name) for one- and optionally two-token prefixes."""
+    singles = []
+    for word in words:
+        token = word[0].upper() + word[1:]
+        singles.append((hash_bytes(token.encode()), token))
+        yield singles[-1]
+    if not two_token:
+        return
+    for h1, token1 in singles:
+        for h2, token2 in singles:
+            h = shift(h1, len(token2)) ^ h2
+            yield h, token1 + token2
+
+
+def main():
+    verify_tables()
+    asset_dir = sys.argv[1] if len(sys.argv) > 1 else 'Assets'
+    out_path = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else
+                            'docs/key_names_mitm.txt')
+    words = harvest()
+    keys = collect_keys(asset_dir)
+    known = set(KNOWN_KEY_NAMES)
+    found = {}
+
+    for two_token in (False, True):
+        table = {}
+        for h, name in prefixes(words, two_token):
+            table.setdefault(h, name)
+        for target in sorted(keys - known - set(found)):
+            for word in words:
+                for token in (word, word[0].upper() + word[1:]):
+                    data = token.encode()
+                    need = inv_shift(target ^ hash_bytes(data), len(data))
+                    prefix = table.get(need)
+                    if prefix is None:
+                        continue
+                    candidate = prefix + token
+                    if hash_bytes(candidate.encode()) == target:
+                        found[target] = candidate
+                        break
+                if target in found:
+                    break
+        print(f'{"two-token" if two_token else "one-token"}: '
+              f'vocab={len(words)} prefixes={len(table)} resolved={len(found)}')
+
+    lines = [
+        'Generated by tools/mitm_key_names.py (exact hash matches only).',
+        'Merge verified additions into KNOWN_KEY_NAMES in tools/crack_hash.py.',
+        '',
+        f'vocab={len(words)} collected={len(keys)} previously_known={len(known)}',
+        f'new_matches={len(found)}',
+        '',
+    ]
+    lines += [f'0x{key:08x} {name}' for key, name in sorted(found.items())]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text('\n'.join(lines) + '\n')
+    for key, name in sorted(found.items()):
+        print(f'  0x{key:08x} {name}')
+    print(f'wrote {out_path}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

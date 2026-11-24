@@ -1,0 +1,35 @@
+syntax = "proto2";
+
+package mmu;
+
+message Command {
+  optional string name = 1;
+  optional string id = 2;
+  optional string resource = 3;
+  optional int32 x = 4;
+  optional int32 y = 5;
+  optional int32 z = 6;
+  optional int32 fade_delay = 7;
+  optional string value = 8;
+  optional bool play_then_kill = 9;
+  optional string anim = 10;
+  optional int32 move_duration = 11;
+  optional string object = 12;
+  optional int32 move_speed = 13;
+  optional bool face_right = 14;
+  optional int32 delay_between_letters = 15;
+}
+
+message TimeStamp {
+  repeated mmu.Command command = 1;
+  optional uint32 time = 2;
+}
+
+message CutScene {
+  repeated mmu.TimeStamp timestamp = 1;
+}
+
+message Database {
+  repeated mmu.CutScene cutscene = 1;
+  repeated uint32 key = 2;
+}

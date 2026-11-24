@@ -1,0 +1,31 @@
+syntax = "proto2";
+
+package mmu;
+
+message GameParam {
+  required uint32 key = 1;
+  required float param = 2;
+}
+
+message Sound {
+  required uint32 key = 1;
+  required string path = 2;
+  optional int32 allocated = 3;
+  repeated bytes abuf = 4;
+  optional uint32 alen = 5;
+  optional uint32 volume = 6;
+  repeated bytes music_stream = 7;
+  optional uint32 music_stream_len = 8;
+}
+
+message GameObject {
+  required uint32 key = 1;
+  repeated mmu.GameParam game_params = 2;
+  repeated mmu.Sound sounds = 3;
+  repeated uint32 sprites = 4;
+  repeated uint32 sprite_key = 5;
+}
+
+message Guns {
+  repeated mmu.GameObject guns = 1;
+}

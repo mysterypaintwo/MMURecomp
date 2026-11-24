@@ -1,0 +1,24 @@
+Telly 0x67b160 refs=1
+  FUN_00586470 @ 0x00586470
+EZBlock 0x68d450 refs=1
+  FUN_00614a20 @ 0x00614a20
+Flasher 0x67a37c refs=1
+  FUN_0057bfb0 @ 0x0057bfb0
+CopterCannon 0x67a308 refs=1
+  FUN_0057bb90 @ 0x0057bb90
+MineE 0x67bbd8 refs=1
+  FUN_0058f540 @ 0x0058f540
+SuperCannon 0x67d1cc refs=1
+  FUN_005a45d0 @ 0x005a45d0
+SkateBoardMan 0x67d290 refs=1
+  FUN_005a5210 @ 0x005a5210
+SawPole 0x67d344 refs=1
+  FUN_005a5870 @ 0x005a5870
+YoYo 0x67d3b0 refs=1
+  FUN_005a62f0 @ 0x005a62f0
+YokuCritter 0x67e4e0 refs=1
+  FUN_005b7ee0 @ 0x005b7ee0
+Electrode 0x67b28c refs=1
+  FUN_00587750 @ 0x00587750
+CannonBall 0x67b294 refs=1
+  FUN_00587750 @ 0x00587750

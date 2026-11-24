@@ -1,0 +1,13 @@
+# xgun path string addresses in MMU.exe (VA, image base 0x400000)
+Telly 0x67b160
+EZBlock 0x68d450
+Flasher 0x67a37c
+CopterCannon 0x67a308
+MineE 0x67bbd8
+SuperCannon 0x67d1cc
+SkateBoardMan 0x67d290
+SawPole 0x67d344
+YoYo 0x67d3b0
+YokuCritter 0x67e4e0
+Electrode 0x67b28c
+CannonBall 0x67b294

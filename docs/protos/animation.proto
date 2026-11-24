@@ -1,0 +1,39 @@
+syntax = "proto2";
+
+import "sdl.proto";
+
+package mmu;
+
+message AnimationFrame {
+  optional mmu.SDL_Surface image = 1;
+  optional string image_path = 2;
+  required float duration = 3;
+  required int32 xoffset = 4;
+  required int32 yoffset = 5;
+  optional mmu.SDL_Surface collision = 6;
+  optional string collision_path = 7;
+}
+
+message Animation {
+  required int32 mode = 1;
+  repeated mmu.AnimationFrame frames = 2;
+  required int32 frames_count = 3;
+}
+
+message Misc {
+  optional mmu.SDL_Surface single_collision = 1;
+  optional string single_collision_path = 2;
+  required int32 x_handle = 3;
+  required int32 y_handle = 4;
+}
+
+message Sprite {
+  required mmu.Animation animation = 1;
+  required mmu.Misc misc = 2;
+  required string res_root = 3;
+  required uint32 key = 4;
+}
+
+message AllSprites {
+  repeated mmu.Sprite sprites = 1;
+}
