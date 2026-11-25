@@ -94,6 +94,11 @@ public:
     PlayerController& controller() { return controller_; }
     const PlayerController& controller() const { return controller_; }
     const CollisionMap& collision() const { return collision_; }
+    // Per-pixel collision types of the loaded room (empty without an image).
+    const TypeMap& levelTypes() const { return levelTypes_; }
+    // MegaMan's guns.mmu object (animations + GameParams), if present.
+    const PackedGameObject* playerObject() const { return megaman_; }
+    const PackedArchive* archive() const { return pak_; }
     const std::vector<EnemyController>& enemies() const { return enemies_; }
     std::vector<EnemyController>& enemies() { return enemies_; }
 
@@ -109,6 +114,11 @@ public:
     float worldWidth() const { return worldWidth_; }
     float worldHeight() const { return worldHeight_; }
     std::size_t projectileCount() const;
+
+    // Debug tool: teleport the player to a world-space position (logical
+    // pixels), zero its velocity and resync the player WorldObject. Not part of
+    // the original game; used by the front-end's right-drag "Debug Tools" mode.
+    void debugPlacePlayer(float x, float y);
 
     // Adds a live object from a core spawn event. The type name and image are
     // resolved from the same TypeImageMap used for scene spawns.
@@ -133,6 +143,13 @@ private:
     float worldHeight_ = 224.0f;
     u32 nextId_ = 1;
     TypeImageMap typeImages_;
+    // Reconstructed collision: the room's per-pixel types (0x5b4970) and the
+    // player's per-frame collision surfaces, plus MegaMan's game object.
+    const PackedArchive* pak_ = nullptr;
+    const PackedGameObject* megaman_ = nullptr;
+    TypeMap levelTypes_;
+    CollisionMaskCache masks_;
+    float gravity_ = kDefaultGravity;
 };
 
 } // namespace mmu

@@ -301,3 +301,8 @@ ghidra.log.*
 .env
 .env.*
 !.env.example
+# ==========================================
+# Recompilation outputs (generated; never commit game-derived files)
+# ==========================================
+__pycache__/
+recomp_missing_entries.txt

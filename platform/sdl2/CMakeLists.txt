@@ -1,6 +1,3 @@
-if(NOT CMAKE_CROSSCOMPILING)
-  find_package(SDL2 REQUIRED CONFIG)
-endif()
 
 set(MMU_IMGUI_SOURCES
   ${MMU_IMGUI_DIR}/imgui.cpp
@@ -17,7 +14,7 @@ target_include_directories(mmu_imgui PUBLIC
   ${MMU_IMGUI_DIR}
   ${MMU_IMGUI_DIR}/backends
 )
-if(CMAKE_CROSSCOMPILING)
+if(MMU_SWITCH)
   target_include_directories(mmu_imgui PRIVATE ${MMU_SDL2_INCLUDE_DIRS})
   # devkitPro newlib has no execvp/waitpid; ImGui doesn't need shell launch.
   target_compile_definitions(mmu_imgui PUBLIC IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS)
@@ -45,7 +42,7 @@ else()
   set_source_files_properties(${MMU_STB_VORBIS_IMPL} PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
-if(CMAKE_CROSSCOMPILING)
+if(MMU_SWITCH)
   target_include_directories(mmu_sdl2 PRIVATE ${MMU_SDL2_INCLUDE_DIRS})
   target_link_directories(mmu_sdl2 PRIVATE ${MMU_SDL2_LIBRARY_DIRS})
   target_link_libraries(mmu_sdl2 PRIVATE ${MMU_SDL2_LIBRARIES})
@@ -56,7 +53,7 @@ else()
   endif()
 endif()
 
-if(CMAKE_CROSSCOMPILING)
+if(MMU_SWITCH)
   find_program(MMU_ELF2NRO elf2nro HINTS ${DEVKITPRO}/tools/bin)
   find_program(MMU_NACPTOOL nacptool HINTS ${DEVKITPRO}/tools/bin)
   if(MMU_ELF2NRO AND MMU_NACPTOOL)
@@ -67,7 +64,23 @@ if(CMAKE_CROSSCOMPILING)
     add_custom_target(mmu_nacp DEPENDS "${MMU_NACP}")
     add_dependencies(mmu_sdl2 mmu_nacp)
     set(MMU_NRO_ARGS --icon=${LIBOUNCE}/default_icon.jpg --nacp=${MMU_NACP})
-    if(MMU_ROMFS_DIR)
+    # Only assets.pak belongs in romfs. Pointing romfs at a source/repo
+    # directory embeds everything in it (a 2.4 GB .nro), so MMU_PAK stages
+    # the archive alone into <build>/romfs and that directory is embedded.
+    if(MMU_PAK AND EXISTS "${MMU_PAK}")
+      set(MMU_ROMFS_STAGE "${CMAKE_CURRENT_BINARY_DIR}/romfs")
+      add_custom_command(OUTPUT "${MMU_ROMFS_STAGE}/assets.pak"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${MMU_ROMFS_STAGE}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MMU_PAK}" "${MMU_ROMFS_STAGE}/assets.pak"
+        DEPENDS "${MMU_PAK}"
+        COMMENT "Staging assets.pak into romfs"
+        VERBATIM)
+      add_custom_target(mmu_romfs DEPENDS "${MMU_ROMFS_STAGE}/assets.pak")
+      add_dependencies(mmu_sdl2 mmu_romfs)
+      list(APPEND MMU_NRO_ARGS --romfsdir=${MMU_ROMFS_STAGE})
+    elseif(MMU_PAK)
+      message(WARNING "MMU_PAK='${MMU_PAK}' does not exist; building .nro without romfs.")
+    elseif(MMU_ROMFS_DIR)
       if(IS_DIRECTORY "${MMU_ROMFS_DIR}")
         list(APPEND MMU_NRO_ARGS --romfsdir=${MMU_ROMFS_DIR})
       else()

@@ -1,0 +1,4 @@
+capstone>=5.0
+protobuf>=4.0  # extract_font.py / extract_icon.py (asset reading)
+pillow>=9.0    # extract_icon.py
+unicorn>=2.0   # tools/recomp/difftest.py only

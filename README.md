@@ -13,6 +13,18 @@ cutscenes, bosses, and weapon/damage tables are still being recovered from
 
 ## What works today
 
+- **Static recompilation (`mmu_recomp`)**: the original MMU.exe plus its
+  MSVC, SDL and Vorbis DLLs are translated to C and run on SDL2, aiming at
+  bit-exact Windows behaviour. It boots and plays the intro sequence; see
+  `docs/recompilation.md` for usage, debug switches and open issues.
+- **MegaMan's movement is reconstructed from MMU.exe**, not approximated:
+  Stand, Step, Run, Fall (jump, jump-cut, air control, landing buffers), Slide,
+  Ladder, LadderOut and Hurt follow the original state callbacks, use the
+  shipped `guns.mmu` GameParams (move 90, jump -325, gravity 990, ...), and
+  collide **per pixel** through the engine's colour-coded collision types and
+  pixel-stepping sweep mover. MegaMan is drawn with his real animations. See
+  `docs/player_reconstruction.md`; shooting/weapons, object collision, camera
+  and save/load are still open.
 - All eight original `.mmu` assets decode natively (1,725 sprites, 5,853
   animation frames, 791 scenes, 4,926 spawns, 316 game objects, 346 sounds,
   80 cutscenes, 7,513 cutscene commands, 8 standalone surfaces).
@@ -29,9 +41,10 @@ cutscenes, bosses, and weapon/damage tables are still being recovered from
   18 message IDs), **packed collision geometry** for all 791 scenes, and an
   **enemy/boss state layer** reconstructed from recovered vtables. The ImGui
   layer has a 2s2h-inspired touch profile with 2x/3x/4x widget scaling and
-  gamepad navigation; it is debug chrome, not the game's UI. The top menu adds
-  **Quit Game** (with a controller-owned yes/no warning) and **Reset Window
-  Layout**; **ZL+R3** edge-toggles that menu without held-key repeat. Window
+  gamepad navigation; it is debug chrome, not the game's UI. The top menu bar has
+  **Menu** (harness/profile info, **Reset Window Layout**, **Quit Game** with a
+  controller-owned yes/no warning), **Debug Tools** (**Drag Player**: right-click
+  and drag in the game view to move MegaMan) and **View**; **ZL+R3** edge-toggles that menu without held-key repeat. Window
   defaults follow the renderer output, and the host window opens larger on
   high-resolution displays. Builds on macOS and cross-compiles to Switch 2
   (libounce).
@@ -110,16 +123,22 @@ tools/
   generate_rtti_class_names_header.py verbatim RTTI class-name string table
   generate_coverage_report.py bounded artifact coverage report + header
   DecompileTargets.java Ghidra headless decompiler batch script
+  DecompileAll.java     Ghidra headless: decompile every function (+ register
+                        signatures, false no-return repair); see
+                        docs/player_reconstruction.md
+  register_signatures.txt 155 helpers that take register arguments
+  re_annotate.py        annotate decompiled C/disassembly with constant values,
+                        strings and hash names; CRC-32 helper
 
 The Python analyzers are standalone, not CMake targets. With the original
-sources at `/Users/mysterypaint/Downloads/MegaManUnlimited`, run
+sources at `$HOME/Downloads/MegaManUnlimited`, run
 `tools/regenerate_all.sh` to regenerate every checked-in raw-evidence report
 and generated header in the repository's documented order. It accepts `EXE`,
 `ASSETS` and `GUNS` environment overrides. The explicit command list is:
 
 ```sh
-EXE=/Users/mysterypaint/Downloads/MegaManUnlimited/MMU.exe
-ASSETS=/Users/mysterypaint/Downloads/MegaManUnlimited/Assets
+EXE=$HOME/Downloads/MegaManUnlimited/MMU.exe
+ASSETS=$HOME/Downloads/MegaManUnlimited/Assets
 GUNS="$ASSETS/guns.mmu"
 python3 tools/extract_metadata.py "$EXE"
 python3 tools/generate_game_flow_evidence_header.py docs/game_flow.txt core/include/mmu/core/GameFlowEvidenceTable.h
@@ -187,6 +206,10 @@ docs/
   inline_menu_resources.txt 231 exact .xspr pushes in 20 *Menu constructors
   state_slot_blocks.txt     671 raw state thunk/slot blocks (671 complete)
   reconstruction_coverage.txt generated bounded artifact coverage
+  function_inventory.txt    all 16,957 MMU.exe functions (coverage denominator)
+  reconstructed_functions.txt ledger of ported functions (full/partial/data)
+  player_reconstruction.md  engine timing/input/params, per-pixel collision,
+                            MegaMan states, RE workflow and open items
   gameplay_reconstruction.md  virtual layout, MegaMan states and messages
   gun_params.txt       constructor keys grouped by vftable
   key_names.txt        137 verified GameParam key -> name mappings
@@ -198,6 +221,7 @@ docs/
 core/
   include/mmu/core/     public headers (Types, ProtoReader, AssetDatabase,
                         PackedArchive, CutsceneRuntime, World, LevelArt,
+                        Collision,
                         PlayerState, EnemyState, GunParams, DebugConsole,
                         GameFlow, FlowEvidence, GameFlowEvidenceTable,
                         RegisteredStateGraph,
@@ -220,12 +244,28 @@ third_party/            vendored stb_vorbis (public domain)
 cmake/Switch2Toolchain.cmake
 ```
 
+## Build with make (all platforms)
+
+```sh
+make            # = make all: host build + Switch 2 when devkitPro is installed
+make macos      # build-macos/      make linux     # build-linux/
+make windows    # build-windows/   make switch2   # build-switch2/*.nro
+make test       # host --selftest + flow selftest (non-zero exit on failure)
+make run        # build and launch the host binary
+make bake ASSETS=/path/to/MegaManUnlimited/Assets   # assets.pak next to the binary
+make clean      # removes build-macos/linux/windows/switch2 (never build/)
+```
+
+Variables: `ASSETS`, `PAK`, `DEVKITPRO` (default `/opt/devkitpro`), `CONFIG`
+(default `RelWithDebInfo`), `JOBS`, `IMGUI`. The raw CMake commands below
+still work.
+
 ## Build (macOS)
 
 ```sh
 brew install sdl2        # sdl2-compat provides SDL2 headers/libs
 cmake -S . -B build -DCMAKE_PREFIX_PATH=/opt/homebrew \
-  -DMMU_ASSET_DIR=/Users/mysterypaint/Downloads/MegaManUnlimited/Assets
+  -DMMU_ASSET_DIR=$HOME/Downloads/MegaManUnlimited/Assets
 cmake --build build -j8
 cmake --build build --target bake_assets   # writes assets.pak next to the binary
 ./build/platform/sdl2/mmu_sdl2 --selftest
@@ -244,34 +284,72 @@ frames, art and collision coverage across all scenes, a deterministic 60-step
 world simulation, player damage/recovery and grounded-landing checks, Telly
 `Idle → MoveH/MoveV → Idle` transitions (including axis handoff), enemy
 contact damage and cutscene image resolution. `--selftest` now returns a
-nonzero exit code if any of its 127 assertions fail.
+nonzero exit code if any of its 132 assertions fail (including MegaMan's
+GameParams, typed collision, landing, run speed and jump height).
 `mmu_gameflow_runtime_selftest` is the separate asset-free check for the
 reconstructed flow runtime and named-state dispatcher.
 `--sprite=<key>` opens the sprite viewer preselected on that key.
+`--screenshot=<file.bmp>` saves the last rendered frame when `--quit-after`
+ends the run (headless visual checks).
 `--sound=<key>` / `--music=<key>` play a sound at startup, `--level=<key|index>`
 opens the level viewer on a scene, and `--play=<key|index>` instantiates a
 scene in the live world and starts it running. `--quit-after=<seconds>` exits
 the event loop cleanly after a delay and prints the console log, so headless
 smoke tests can run with a deterministic zero exit code.
 
+A build directory is tied to the absolute source path it was configured from.
+If the repository moves, configure a fresh directory (e.g. `build-macos`).
+
+## Build (Linux / Windows)
+
+The code is portable C++17 with SDL2 and Dear ImGui (expected at `../imgui`, or
+pass `-DMMU_IMGUI_DIR=...`); no platform APIs are used outside `main.cpp`'s
+SDL calls. These configurations have not been verified yet:
+
+```sh
+# Linux (Debian/Ubuntu)
+sudo apt install libsdl2-dev cmake g++
+cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMMU_ASSET_DIR=/path/to/Assets
+cmake --build build-linux -j
+
+# Windows (Visual Studio 2022 + vcpkg)
+vcpkg install sdl2:x64-windows
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake ^
+      -DMMU_ASSET_DIR=C:/path/to/Assets
+cmake --build build-win --config RelWithDebInfo
+```
+
+## Gameplay controls (harness)
+
+Keyboard follows the original `options.xopts` defaults where possible: arrows
+or WASD move, **Z**/Space jump, **Left Shift** (or Ctrl/C) fire, **Left Alt**
+(or X) slide, Down+Jump also slides, Esc/P pauses. Gamepad: d-pad/left stick,
+confirm button jumps, cancel button slides, X fires. The controller derives
+pressed/released edges itself, so all inputs are reported as held state.
+
 ## Build (Switch 2)
+
+```sh
+make switch2                       # sources $DEVKITPRO/switch2vars.sh itself
+make switch2 PAK=/path/to/assets.pak
+```
+
+or by hand:
 
 ```sh
 source /opt/devkitpro/switch2vars.sh
 cmake -S . -B build-switch2 \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/Switch2Toolchain.cmake" \
-  -DMMU_ASSET_DIR=romfs:/ \
-  -DMMU_ROMFS_DIR=/absolute/path/to/directory-containing-assets.pak
+  -DMMU_PAK=/absolute/path/to/assets.pak
 cmake --build build-switch2 -j8
 ```
 
-Replace `/absolute/path/to/directory-containing-assets.pak` with a real
-directory (for example `/Users/you/MegaManUnlimitedRecomp/build`). Omitting
-`-DMMU_ROMFS_DIR` entirely is also fine: the `.nro` builds without embedded
-assets. A nonexistent path is only a warning now, not a build failure.
-
-`elf2nro` embeds that directory into the `.nro`; the app mounts it at
-startup via `romfsMountSelf("romfs")`. The output is
+`MMU_PAK` copies just that archive into `build-switch2/platform/sdl2/romfs/`,
+and `elf2nro` embeds that folder (≈430 MB `.nro`). The app mounts it at
+startup via `romfsMountSelf("romfs")`. Without `MMU_PAK` the `.nro` builds
+with no embedded assets. **Do not** point the older `MMU_ROMFS_DIR` at the
+repository or a build folder: everything inside gets embedded (that produced
+a 2.4 GB `.nro`). `make switch2` always clears it. Output:
 `build-switch2/platform/sdl2/mmu_sdl2.nro`.
 
 Notes:
@@ -295,7 +373,9 @@ Notes:
   menus.mmu --max-images 8
 ```
 
-`assets.pak` (magic `MMUPAK` v4; v2/v3 files still load with less metadata) is a
+`assets.pak` (magic `MMUPAK` v6; v2–v5 files still load with less metadata;
+v6 adds the `guns.mmu` GameParam table, and frames without their own collision
+surface are linked to the sprite's `single_collision`) is a
 little-endian 128-byte header followed by tables of 136-byte image/audio
 entries, 24-byte animation frames, 40-byte sprites, 24-byte scenes, and
 32-byte spawns, then a string table and a blob area. Frames store

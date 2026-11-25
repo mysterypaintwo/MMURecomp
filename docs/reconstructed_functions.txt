@@ -1,0 +1,83 @@
+# Ledger of MMU.exe functions with a portable reconstruction.
+# Denominator: docs/function_inventory.txt. Counted by
+# tools/generate_coverage_report.py.
+#
+# Columns: VA  status  owner  role  ->  portable location
+#   full     behaviour ported branch-for-branch (constants from the binary/pak)
+#   partial  main path ported; named sub-paths still missing (see notes)
+#   data     only the constants/table the function encodes are used
+#
+# Keep one line per function; add notes after "--".
+
+# --- engine: timing, input, params, state machine --------------------------
+0x43e4b0 partial  Engine     frame delta from SDL_GetTicks            -> World::step dt (fixed 1/60 in harness) -- original is variable dt capped by 0x43e510
+0x43e510 data     Engine     delta getter, cap 0.031 s                -> docs/player_reconstruction.md
+0x441820 full     Input      per-action up/released/held/pressed flags -> PlayerController::Buttons::sample
+0x441c80 full     Input      query action+flag mask                   -> PlayerController button edges
+0x441d90 full     Input      pressed(action)                          -> Buttons::pressed
+0x441db0 full     Input      held(action)                             -> Buttons::held
+0x440880 data     Input      options.xopts control-name -> action id  -> PlayerInput comment
+0x43c800 full     GameObject GetParam(hash) linear search, 0 default  -> PackedArchive::paramOf / PlayerParams::loadFrom
+0x43c010 full     Engine     CRC-32 hash (names, keys)                -> PlayerState.cpp crc(), tools/re_annotate.py
+0x43c840 full     GameObject gravity: 375 in water else global       -> PlayerController::gravity
+0x43c890 partial  GameObject in-water test (type 0x2000000)          -> PlayerController::gravity -- object grid not modelled
+0x4405c0 full     StateMachine set state by name                     -> PlayerController::setState (enter/exit run immediately)
+0x430bc0 full     StateMachine run current state's Update            -> PlayerController::updateState
+
+# --- engine: collision ------------------------------------------------------
+0x445130 full     Collision  colour -> type table                    -> collisionTypeForRgb
+0x4458b0 full     Collision  read surface pixel as RGB               -> readPackedRgb
+0x445b20 partial  Collision  test surface vs grid + Environment       -> testShape -- live-object grid entries not modelled
+0x445ea0 partial  Collision  test object surface at offset            -> PlayerController::blockedAt
+0x445af0 partial  Collision  test named animation surface             -> PlayerController::shapeFor + blockedAt
+0x43cc00 partial  GameObject slot-14 contact gather (+0x98 flags)     -> PlayerController::gatherContacts -- +0x10c/+0xa4 crush/conveyor geometry not ported
+0x5b48c0 full     Environment type at screen pixel + camera          -> testShape level lookup
+0x5b4970 full     Environment build per-pixel type map from image    -> buildTypeMap / World::levelTypes
+0x5b4f30 full     Collision  sweep screen-y clamp [1,223]             -> clampSweepScreenY
+0x5b4ed0 full     Collision  sweep minor-axis slope (x-major)         -> sweepMove
+0x5b4f00 full     Collision  sweep minor-axis slope (y-major)         -> sweepMove
+0x5b4f70 full     Math       abs                                      -> Collision.cpp absf
+0x5b4fa0 full     Math       sign (0 -> +1)                           -> Collision.cpp signOf
+0x5b5220 full     Collision  pixel-stepping sweep mover               -> sweepMove
+
+# --- MegaMan (vftable 0x68fccc) ----------------------------------------------
+0x5a7400 full     MegaMan    mover mask 3 (7 with +0x1a0)              -> PlayerController::moverMask -- +0x1a0 never set yet
+0x5a7430 full     MegaMan    +1 along global gravity                  -> Ladder code
+0x5a7460 full     MegaMan    -1 along global gravity                  -> Ladder code
+0x5a7490 full     Math       clamp                                     -> PlayerState.cpp clampf
+0x5a7550 full     Math       truncate                                  -> truncf32
+0x5a7590 full     Math       abs                                       -> absf
+0x5a75c0 full     Math       sign                                      -> signOf
+0x5a75f0 full     Math       min                                       -> std::min
+0x5a7620 full     Math       max                                       -> std::max
+0x5a83f0 full     MegaMan    climb held (up vs gravity)               -> climbHeld
+0x5a8ab0 full     MegaMan    ladder probe direction                   -> tryGrabLadder
+0x5a8ae0 full     MegaMan    descend held                             -> descendHeld
+0x5a9770 full     MegaMan    land -> Stand/Run                        -> landToGround
+0x5a97d0 full     MegaMan    grab ladder (200 ms regrab, x snap)      -> tryGrabLadder
+0x5a9b20 full     MegaMan    slide ledge -> Fall (jump body, 12 px)   -> trySlideFallOff
+0x5a9c40 full     MegaMan    walk off ledge -> Fall                    -> tryFallOff
+0x5a9de0 partial  MegaMan    jump start (-325 * sign g)                -> tryJump -- ride-platform (+0x1c0) boost not ported
+0x5aa080 partial  MegaMan    slide start                               -> trySlide -- uses one-frame slide surface probe; Z variant omitted
+0x5aa3c0 full     MegaMan    slide headroom (stand surface)            -> slideHasHeadroom
+0x5a7a50 partial  MegaMan    Stand.enter                               -> enterState(Stand) -- LayingDown/standglow variants omitted
+0x5afed0 partial  MegaMan    Stand.update                              -> updateState(Stand) -- shooting (0x5ad160) and 0x5a87c0/0x5a8730 not ported
+0x5a8590 full     MegaMan    Step.enter (1 px nudge, masks 1 / 3)      -> enterState(Step)
+0x5afce0 partial  MegaMan    Step.update                               -> updateState(Step) -- shooting not ported
+0x5a7310 full     MegaMan    Run.enter                                 -> enterState(Run)
+0x5af930 partial  MegaMan    Run.update                                -> updateState(Run) -- shooting, 0x420ae0 push test not ported
+0x5a7eb0 full     MegaMan    Fall.enter                                -> enterState(Fall)
+0x5aea50 partial  MegaMan    Fall.update (air accel/decel, jump cut, buffers, landing) -> updateState(Fall) -- conveyor contacts (+0x10c), Jet/Comet, ride platforms not ported
+0x5a8d50 data     MegaMan    Fall.exit (clears +0x3dd/+0x1d8)          -> n/a (Z/Jet flags)
+0x5ab980 partial  MegaMan    Slide.enter                               -> enterState(Slide) -- dust effect and probe details omitted
+0x5ae630 partial  MegaMan    Slide.update (55 px, reverse under ceiling) -> updateState(Slide) -- conveyor drift on +0x164 omitted
+0x5a77c0 full     MegaMan    Ladder.enter                              -> enterState(Ladder)
+0x5adfc0 partial  MegaMan    Ladder.update (75 px/s, climb-out)        -> updateState(Ladder) -- shooting on ladder not ported
+0x5a7280 full     MegaMan    Ladder.exit (200 ms regrab timer)         -> exitState(Ladder)
+0x5a7710 full     MegaMan    LadderOut.enter                           -> enterState(LadderOut)
+0x5adde0 full     MegaMan    LadderOut.update (50 ms)                  -> updateState(LadderOut)
+0x5acdc0 partial  MegaMan    Hurt.enter (1.5 s invincibility, -32 px/s) -> enterState(Hurt)
+0x5acbf0 partial  MegaMan    Hurt.update                               -> updateState(Hurt) -- 0.5 s timer approximated
+0x5aa470 partial  MegaMan    slot 11 update (pit death 244 / -20)      -> PlayerController::update -- water splash, carried, item pickups omitted
+0x5b15d0 partial  MegaMan    slot 14 post-collide (spikes, death type) -> PlayerController::update -- gravity-flip zones not ported
+0x5b02f0 partial  MegaMan    message handler                           -> PlayerController::handleEvent (pre-existing approximation)

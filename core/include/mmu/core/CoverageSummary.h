@@ -20,8 +20,8 @@ inline constexpr u32 kCoverageSlotStates = 671u;
 inline constexpr u32 kCoverageSlotComplete = 671u;
 inline constexpr u32 kCoverageSlotIncomplete = 0u;
 inline constexpr u32 kCoverageSlotCompletePercentBp = 10000u;
-inline constexpr u32 kCoverageRawReports = 36u;
-inline constexpr u32 kCoverageHeaderBackedReports = 36u;
+inline constexpr u32 kCoverageRawReports = 38u;
+inline constexpr u32 kCoverageHeaderBackedReports = 38u;
 inline constexpr u32 kCoverageReportPercentBp = 10000u;
 inline constexpr u32 kCoverageGeneratedHeaders = 39u;
 inline constexpr u32 kCoverageGeneratedHeadersDirect = 37u;
@@ -36,6 +36,12 @@ inline constexpr u32 kCoverageProtoSchemas = 6u;
 inline constexpr u32 kCoverageProtoMessages = 24u;
 inline constexpr u32 kCoverageProtoFields = 166u;
 inline constexpr u32 kCoverageSceneNames = 791u;
+inline constexpr u32 kCoverageFunctionsTotal = 16957u;
+inline constexpr u32 kCoverageFunctionsFull = 43u;
+inline constexpr u32 kCoverageFunctionsPartial = 21u;
+inline constexpr u32 kCoverageFunctionsDataOnly = 3u;
+inline constexpr u32 kCoverageMegaManFunctions = 150u;
+inline constexpr u32 kCoverageMegaManPorted = 47u;
 
 // Raw reports with no direct portable-header counterpart.
 inline constexpr std::string_view kCoverageUnmappedReports[1] = {

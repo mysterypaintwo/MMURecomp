@@ -114,6 +114,19 @@ const WorldObject* World::player() const {
                : &objects_[playerIndex_];
 }
 
+void World::debugPlacePlayer(float x, float y) {
+    controller_.x = x;
+    controller_.y = y;
+    controller_.vx = 0.0f;
+    controller_.vy = 0.0f;
+    if (WorldObject* object = player()) {
+        object->x = x;
+        object->y = y;
+        object->vx = 0.0f;
+        object->vy = 0.0f;
+    }
+}
+
 std::size_t World::projectileCount() const {
     std::size_t count = 0;
     for (const WorldObject& object : objects_)
@@ -339,6 +352,8 @@ void World::clear() {
     objects_.clear();
     enemies_.clear();
     collision_ = CollisionMap{};
+    levelTypes_ = TypeMap{};
+    masks_.clear();
     camera_ = Camera{};
     hasScene_ = false;
     sceneKey_ = 0;
@@ -424,6 +439,14 @@ bool World::loadScene(const PackedArchive& pak, const PackedScene& scene,
     const bool loaded = loadScene(scene, typeImages);
     collision_ = resolveSceneCollision(pak, scene);
     controller_.collision = collision_.valid() ? &collision_ : nullptr;
+    pak_ = &pak;
+    megaman_ = pak.findGameObject(kMegaManObjectKey);
+    controller_.params = PlayerParams{};
+    if (megaman_) controller_.params.loadFrom(pak, *megaman_);
+    masks_.clear();
+    levelTypes_ = collision_.valid() ? buildTypeMap(pak.entries()[collision_.imageIndex])
+                                     : TypeMap{};
+    gravity_ = kDefaultGravity;
     if (WorldObject* player = this->player(); player && collision_.valid()) {
         // A few editor spawns sit inside a wall; lift the player to open space.
         for (int i = 0; i < 64 && collision_.solidAt(controller_.x, controller_.y); ++i)
@@ -457,7 +480,20 @@ void World::step(float dt, float playerVX, float playerVY) {
 void World::step(float dt, const PlayerInput& input) {
     time_ += dt;
     controller_.collision = collision_.valid() ? &collision_ : nullptr;
-    controller_.update(dt, input);
+    PlayerWorldContext context;
+    if (pak_ && megaman_ && levelTypes_.valid()) {
+        context.pak = pak_;
+        context.object = megaman_;
+        context.level = &levelTypes_;
+        context.masks = &masks_;
+        // Collision runs in screen space and adds the truncated camera back
+        // (0x5b48c0); the harness follow camera is fractional, so give the
+        // tests a whole-pixel camera to keep them frame-to-frame consistent.
+        context.cameraX = static_cast<float>(static_cast<i32>(camera_.x));
+        context.cameraY = static_cast<float>(static_cast<i32>(camera_.y));
+        context.gravity = gravity_;
+    }
+    controller_.update(dt, input, context);
     if (WorldObject* player = this->player(); player && player->active) {
         player->x = controller_.x;
         player->y = controller_.y;

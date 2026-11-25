@@ -1,5 +1,7 @@
 #include "mmu/core/PackedArchive.h"
 
+#include <algorithm>
+
 #include <cstring>
 #include <utility>
 
@@ -189,6 +191,26 @@ bool PackedArchive::load(ByteView bytes) {
         if (sprite.frameCount) {
             if (!inRange(firstFrame, sprite.frameCount, frames_.size())) return false;
             sprite.frames = frames_.data() + firstFrame;
+            // The sprite-level single_collision surface (animation.proto
+            // field 1) is baked directly after the sprite's last frame
+            // surface under the same key. Frames without their own collision
+            // use it, which is how MegaMan's per-pixel body is found.
+            u32 last = 0;
+            bool anyMissing = false;
+            for (u32 f = 0; f < sprite.frameCount; ++f) {
+                const PackedFrame& frame = frames_[firstFrame + f];
+                last = std::max(last, frame.imageIndex);
+                if (frame.collisionIndex != 0xFFFFFFFFu) last = std::max(last, frame.collisionIndex);
+                else anyMissing = true;
+            }
+            const u32 single = last + 1;
+            if (anyMissing && single < entries_.size() && entries_[single].key == sprite.key &&
+                entries_[single].type == PackedEntryType::Image) {
+                for (u32 f = 0; f < sprite.frameCount; ++f) {
+                    PackedFrame& frame = frames_[firstFrame + f];
+                    if (frame.collisionIndex == 0xFFFFFFFFu) frame.collisionIndex = single;
+                }
+            }
         }
         sprites_.push_back(sprite);
     }
@@ -359,6 +381,28 @@ bool PackedArchive::load(ByteView bytes) {
         }
     }
 
+    if (version >= 6) {
+        // v6 stores the guns.mmu GameParams in the old reserved8/reserved9
+        // slots: table offset at +176, row count at +184. Rows are 12 bytes
+        // (object index, key, float value), grouped by object index.
+        const u64 paramOffset = readU64(bytes.data + 176);
+        const u32 paramCount = readU32(bytes.data + 184);
+        if (paramCount > 1'000'000 ||
+            !inRange(paramOffset, static_cast<u64>(paramCount) * 12u, bytes.size))
+            return false;
+        gameParams_.reserve(paramCount);
+        for (u32 i = 0; i < paramCount; ++i) {
+            const u8* p = bytes.data + paramOffset + static_cast<std::size_t>(i) * 12u;
+            const u32 objectIndex = readU32(p);
+            if (objectIndex >= gameObjects_.size()) return false;
+            PackedGameObject& object = gameObjects_[objectIndex];
+            if (object.paramCount == 0) object.firstParam = i;
+            else if (object.firstParam + object.paramCount != i) return false;
+            ++object.paramCount;
+            gameParams_.push_back(PackedGameParam{readU32(p + 4), readFloat(p + 8)});
+        }
+    }
+
     valid_ = true;
     return true;
 }
@@ -374,6 +418,7 @@ void PackedArchive::clear() {
     cutsceneCommands_.clear();
     gameObjects_.clear();
     gameObjectSprites_.clear();
+    gameParams_.clear();
     strings_ = {};
     version_ = 0;
     valid_ = false;
@@ -400,6 +445,25 @@ const PackedScene* PackedArchive::findScene(u32 key) const {
 const PackedGameObject* PackedArchive::findGameObject(u32 key) const {
     for (const PackedGameObject& object : gameObjects_)
         if (object.key == key) return &object;
+    return nullptr;
+}
+
+float PackedArchive::paramOf(const PackedGameObject& object, u32 key) const {
+    for (u32 i = 0; i < object.paramCount; ++i) {
+        const PackedGameParam& param = gameParams_[object.firstParam + i];
+        if (param.key == key) return param.value;
+    }
+    return 0.0f;
+}
+
+const PackedSprite* PackedArchive::animationOf(const PackedGameObject& object,
+                                               u32 animKey) const {
+    for (u32 i = 0; i < object.spriteCount; ++i) {
+        const PackedGameObjectSprite& link = gameObjectSprites_[object.firstSprite + i];
+        if (link.animKey != animKey) continue;
+        if (link.spriteIndex < sprites_.size()) return &sprites_[link.spriteIndex];
+        return findSprite(link.spriteKey);
+    }
     return nullptr;
 }
 

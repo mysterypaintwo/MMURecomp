@@ -9,6 +9,7 @@ add_library(mmu_core STATIC
   src/StateDispatcher.cpp
   src/World.cpp
   src/LevelArt.cpp
+  src/Collision.cpp
   src/PlayerState.cpp
   src/EnemyState.cpp
 )

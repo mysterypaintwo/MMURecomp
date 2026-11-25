@@ -52,6 +52,9 @@ REPORT_HEADER = {
     "player_control_evidence.txt": "PlayerControlEvidenceTable.h",
     "player_spawn_evidence.txt": "PlayerSpawnEvidence.h",
     "reconstruction_coverage.txt": "CoverageSummary.h",
+    # Function ledger + inventory: their counts are copied into CoverageSummary.h.
+    "function_inventory.txt": "CoverageSummary.h",
+    "reconstructed_functions.txt": "CoverageSummary.h",
     "rtti_classes.txt": "RttiClassNames.h",
     "save_flags.txt": "SaveFlagTable.h",
     "stage_select_grid.txt": "StageSelectGrid.h",
@@ -240,7 +243,7 @@ def collect(root):
         elif not os.path.exists(os.path.join(headers, header_name)):
             raise RuntimeError("missing mapped header %s" % header_name)
 
-    return {
+    data = {
         "resolved": resolved,
         "collected": collected,
         "unresolved": collected - resolved,
@@ -269,6 +272,44 @@ def collect(root):
         "header_backed_reports": len(report_names) - len(unmapped_reports),
         "unmapped_reports": unmapped_reports,
     }
+    data.update(function_coverage(root))
+    return data
+
+
+def function_coverage(root):
+    """Ledger rows (docs/reconstructed_functions.txt) against every function
+    Ghidra found in MMU.exe (docs/function_inventory.txt)."""
+    sizes = {}
+    inventory = os.path.join(root, "docs", "function_inventory.txt")
+    if os.path.exists(inventory):
+        for line in read(inventory).splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].startswith("0x"):
+                sizes[int(parts[0], 16)] = int(parts[1])
+    status = {}
+    ledger = os.path.join(root, "docs", "reconstructed_functions.txt")
+    if os.path.exists(ledger):
+        for line in read(ledger).splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].startswith("0x"):
+                status[int(parts[0], 16)] = parts[1]
+    def count(kind):
+        return sum(1 for va, st in status.items() if st == kind)
+    def size(kinds):
+        return sum(sizes.get(va, 0) for va, st in status.items() if st in kinds)
+    megaman = [va for va in sizes if 0x5a7000 <= va < 0x5b5300]
+    return {
+        "functions_total": len(sizes),
+        "functions_bytes": sum(sizes.values()),
+        "functions_full": count("full"),
+        "functions_partial": count("partial"),
+        "functions_data": count("data"),
+        "functions_unknown_va": sorted(va for va in status if sizes and va not in sizes),
+        "functions_ported_bytes": size(("full", "partial")),
+        "megaman_total": len(megaman),
+        "megaman_ported": sum(1 for va in megaman if status.get(va) in ("full", "partial")),
+    }
+
 
 
 def write_report(path, data):
@@ -316,6 +357,20 @@ def write_report(path, data):
             data["proto_fields"]),
         "scene names=%d" % data["scene_names"],
         "",
+        "functions (docs/function_inventory.txt) total=%d bytes=%d" % (
+            data["functions_total"], data["functions_bytes"]),
+        "ported functions full=%d partial=%d data-only=%d (%.1f%% of functions, "
+        "%.1f%% of code bytes)" % (
+            data["functions_full"], data["functions_partial"], data["functions_data"],
+            percent(data["functions_full"] + data["functions_partial"],
+                    data["functions_total"]),
+            percent(data["functions_ported_bytes"], data["functions_bytes"])),
+        "MegaMan range 0x5a7000-0x5b5300 ported=%d/%d (%.1f%%)" % (
+            data["megaman_ported"], data["megaman_total"],
+            percent(data["megaman_ported"], data["megaman_total"])),
+        "ledger VAs missing from inventory=%s" % ",".join(
+            "0x%x" % va for va in data["functions_unknown_va"]),
+        "",
     ])
     with open(path, "w", encoding="utf-8") as out:
         out.write("\n".join(lines))
@@ -354,6 +409,12 @@ def write_header(path, data):
         ("kCoverageProtoMessages", data["proto_messages"]),
         ("kCoverageProtoFields", data["proto_fields"]),
         ("kCoverageSceneNames", data["scene_names"]),
+        ("kCoverageFunctionsTotal", data["functions_total"]),
+        ("kCoverageFunctionsFull", data["functions_full"]),
+        ("kCoverageFunctionsPartial", data["functions_partial"]),
+        ("kCoverageFunctionsDataOnly", data["functions_data"]),
+        ("kCoverageMegaManFunctions", data["megaman_total"]),
+        ("kCoverageMegaManPorted", data["megaman_ported"]),
     ]
     lines = [
         "#pragma once",

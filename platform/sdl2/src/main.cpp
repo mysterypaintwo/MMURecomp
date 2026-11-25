@@ -302,6 +302,12 @@ struct UiState {
     bool prevRight = false;
     bool prevConfirm = false;
     bool prevCancel = false;
+
+    // Debug Tools menu. Right-click-drag teleports the player while enabled.
+    bool debugDragPlayer = false;
+    bool draggingPlayer = false;
+    float dragWorldX = 0.0f;
+    float dragWorldY = 0.0f;
 };
 
 std::string joinAssetPath(const std::string& dir, const std::string& file) {
@@ -3388,6 +3394,12 @@ void registerCommands(AppState& state) {
                           mmu::kCoverageProtoFields,
                           mmu::kCoverageSceneNames);
             c.log(line);
+            std::snprintf(line, sizeof(line),
+                          "  ported functions full=%u partial=%u data=%u of %u; MegaMan %u/%u",
+                          mmu::kCoverageFunctionsFull, mmu::kCoverageFunctionsPartial,
+                          mmu::kCoverageFunctionsDataOnly, mmu::kCoverageFunctionsTotal,
+                          mmu::kCoverageMegaManPorted, mmu::kCoverageMegaManFunctions);
+            c.log(line);
         }
     });
     state.console.registerCommand("keysweep", "key-name sweep counters only: keysweep [summary]", [](mmu::DebugConsole& c, const mmu::DebugConsole::Arguments& args) {
@@ -4921,16 +4933,25 @@ struct GameRuntime {
             if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) input.moveY -= 1.0f;
             if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) input.moveY += 1.0f;
             if (jumpNow) input.jump = true;
-            if (keys[SDL_SCANCODE_X] || keys[SDL_SCANCODE_LSHIFT]) input.dash = true;
-            if (keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_C]) input.shoot = true;
+            // Original defaults (options.xopts): Z jump, LShift fire, LAlt
+            // slide. X/C remain as harness aliases for slide/fire.
+            if (keys[SDL_SCANCODE_X] || keys[SDL_SCANCODE_LALT]) input.dash = true;
+            if (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_C])
+                input.shoot = true;
         }
         if (pad) {
             const Sint16 axisX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
             const Sint16 axisY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
             if (std::abs(axisX) > 8000) input.moveX += axisX / 32767.0f;
             if (std::abs(axisY) > 8000) input.moveY += axisY / 32767.0f;
-            if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B)) input.dash = true;
+            // Jump/slide follow the platform's confirm/cancel layout.
+            if (SDL_GameControllerGetButton(pad, kUiConfirmButton)) input.jump = true;
+            if (SDL_GameControllerGetButton(pad, kUiCancelButton)) input.dash = true;
             if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_X)) input.shoot = true;
+            if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) input.moveX -= 1.0f;
+            if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) input.moveX += 1.0f;
+            if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP)) input.moveY -= 1.0f;
+            if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) input.moveY += 1.0f;
         }
         if (input.moveX != 0.0f && input.moveY != 0.0f) {
             input.moveX *= 0.70710678f;
@@ -4942,9 +4963,9 @@ struct GameRuntime {
         accumulator += delta < 0.1f ? delta : 0.1f;
         constexpr float kStep = 1.0f / 60.0f;
         for (int guard = 0; accumulator >= kStep && guard < 8; ++guard) {
+            // Inputs are held state; the controller derives press/release
+            // edges itself, like the original input layer (0x441820).
             state.world.step(kStep, input);
-            input.jump = false; // edge-triggered actions fire once per frame
-            input.dash = false;
             accumulator -= kStep;
         }
 
@@ -4965,6 +4986,44 @@ SDL_Rect gameViewport(SDL_Renderer* renderer) {
     if (scale < 1) scale = 1;
     const int vw = 256 * scale, vh = 224 * scale;
     return SDL_Rect{(w - vw) / 2, (h - vh) / 2, vw, vh};
+}
+
+// Debug Tools: right-click-drag the player. SDL reports mouse positions in
+// window points; the game viewport is laid out in renderer output pixels, so
+// scale between them before undoing the viewport/camera transform.
+void handleDebugDrag(AppState& state, SDL_Window* window, SDL_Renderer* renderer,
+                     const SDL_Event& event,
+                     bool imguiWantsMouse) {
+    UiState& ui = state.uiState;
+    if (!ui.debugDragPlayer || !state.world.hasScene()) {
+        ui.draggingPlayer = false;
+        return;
+    }
+    int mouseX = 0, mouseY = 0;
+    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_RIGHT) {
+        if (imguiWantsMouse) return;
+        ui.draggingPlayer = true;
+        mouseX = event.button.x;
+        mouseY = event.button.y;
+    } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_RIGHT) {
+        ui.draggingPlayer = false;
+        return;
+    } else if (event.type == SDL_MOUSEMOTION && ui.draggingPlayer) {
+        mouseX = event.motion.x;
+        mouseY = event.motion.y;
+    } else {
+        return;
+    }
+    int windowW = 1, windowH = 1;
+    SDL_GetWindowSize(window, &windowW, &windowH);
+    const float pixelX = mouseX * static_cast<float>(state.outputWidth) / std::max(1, windowW);
+    const float pixelY = mouseY * static_cast<float>(state.outputHeight) / std::max(1, windowH);
+    const SDL_Rect vp = gameViewport(renderer);
+    const float scale = static_cast<float>(vp.w) / 256.0f;
+    const mmu::Camera& camera = state.world.camera();
+    ui.dragWorldX = camera.x + (pixelX - vp.x) / scale;
+    ui.dragWorldY = camera.y + (pixelY - vp.y) / scale;
+    state.world.debugPlacePlayer(ui.dragWorldX, ui.dragWorldY);
 }
 
 void renderGame(SDL_Renderer* renderer, AppState& state, TextureCache& cache) {
@@ -5005,8 +5064,9 @@ void renderGame(SDL_Renderer* renderer, AppState& state, TextureCache& cache) {
         }
     }
 
+    const mmu::WorldObject* playerObject = state.world.player();
     for (const mmu::WorldObject& object : state.world.objects()) {
-        if (!object.active) continue;
+        if (!object.active || &object == playerObject) continue; // drawn below
         if (object.imageIndex == 0xFFFFFFFFu) {
             if (object.projectile == mmu::SpawnedObjectKind::None) continue;
             // Runtime projectiles whose art path is not in the packed image
@@ -5039,9 +5099,29 @@ void renderGame(SDL_Renderer* renderer, AppState& state, TextureCache& cache) {
 
     const mmu::PlayerController& pc = state.world.controller();
     const int px = sx(pc.x), py = sy(pc.y);
-    SDL_SetRenderDrawColor(renderer, 120, 255, 140, 255);
-    const SDL_Rect marker{px - 2, py - 6, 4, 6};
-    SDL_RenderFillRect(renderer, &marker);
+    const mmu::PackedFrame* playerFrame = pc.currentFrame();
+    SDL_Texture* playerTexture = playerFrame ? cache.get(state.pak, playerFrame->imageIndex) : nullptr;
+    // Post-hurt invincibility blinks the sprite (harness approximation).
+    const bool blinkHidden = pc.invincible && static_cast<int>(state.world.time() * 30.0f) % 2;
+    if (playerTexture && pc.sprite) {
+        if (!blinkHidden) {
+            const mmu::PackedEntry& image = state.pak.entries()[playerFrame->imageIndex];
+            const int w = std::max(1, static_cast<int>(std::lround(image.width * scale)));
+            const int h = std::max(1, static_cast<int>(std::lround(image.height * scale)));
+            // The handle (feet) sits at the controller position; mirrored
+            // sprites mirror the handle too.
+            const int handleX = pc.facingRight ? pc.sprite->xHandle
+                                               : static_cast<int>(image.width) - pc.sprite->xHandle;
+            const SDL_Rect dst{sx(std::floor(pc.x) - handleX + playerFrame->xOffset),
+                               sy(std::floor(pc.y) - pc.sprite->yHandle + playerFrame->yOffset), w, h};
+            SDL_RenderCopyEx(renderer, playerTexture, nullptr, &dst, 0.0, nullptr,
+                             pc.facingRight ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL);
+        }
+    } else {
+        SDL_SetRenderDrawColor(renderer, 120, 255, 140, 255);
+        const SDL_Rect marker{px - 2, py - 6, 4, 6};
+        SDL_RenderFillRect(renderer, &marker);
+    }
 
     // Harness-only diagnostic bars, drawn with primitive rects so they do not
     // depend on ImGui. These are not the original game's HUD.
@@ -5905,6 +5985,7 @@ int main(int argc, char** argv) {
     AppState state;
     bool selftest = false;
     float autoQuitSeconds = 0.0f;
+    std::string screenshotPath; // --screenshot=<file.bmp>, saved on auto-quit
     bool presetSprite = false, presetSfx = false, presetMusic = false, presetLevel = false, presetPlay = false;
     bool forceTouch = false, forceDesktop = false;
     std::vector<std::string> execCommands;
@@ -5921,6 +6002,8 @@ int main(int argc, char** argv) {
             forceDesktop = true;
         } else if (arg.rfind("--exec=", 0) == 0) {
             execCommands.push_back(arg.substr(7));
+        } else if (arg.rfind("--screenshot=", 0) == 0) {
+            screenshotPath = arg.substr(13);
         } else if (arg.rfind("--quit-after=", 0) == 0) {
             autoQuitSeconds = std::strtof(arg.c_str() + 13, nullptr);
         } else if (arg.rfind("--sprite=", 0) == 0) {
@@ -6725,8 +6808,10 @@ int main(int argc, char** argv) {
                   mmu::kCoverageSlotStates == 671u &&
                   mmu::kCoverageSlotComplete == 671u &&
                   mmu::kCoverageSlotIncomplete == 0u &&
-                  mmu::kCoverageRawReports == 36u &&
-                  mmu::kCoverageHeaderBackedReports == 36u &&
+                  mmu::kCoverageRawReports == 38u &&
+                  mmu::kCoverageHeaderBackedReports == 38u &&
+                  mmu::kCoverageFunctionsTotal == 16957u &&
+                  mmu::kCoverageMegaManFunctions == 150u &&
                   mmu::kCoverageGeneratedHeaders == 39u &&
                   mmu::kCoverageGeneratedHeadersDirect == 37u &&
                   mmu::kCoverageGeneratedHeadersInHarness == 39u &&
@@ -6884,8 +6969,7 @@ int main(int argc, char** argv) {
             state.console.log(line);
             check("stage handoff player accepts input",
                   handoffWorld.hasScene() && handoffWorld.player() != nullptr &&
-                      handoffWorld.controller().facingRight &&
-                      handoffWorld.controller().state == mmu::PlayerState::Run);
+                      handoffWorld.controller().facingRight && handoffX1 > handoffX0);
 
             constexpr u32 kLogoKey = 1548880663u;
             check("cutscene key mapping",
@@ -7103,6 +7187,76 @@ int main(int argc, char** argv) {
                               sim.time());
                 state.console.log(line);
                 check("world sim moves player", after && after->x > x0 + 50.0f);
+
+                // Reconstructed MegaMan path: GameParams from guns.mmu, the
+                // room's typed collision (0x5b4970) and per-frame surfaces.
+                {
+                    mmu::World typed;
+                    typed.loadScene(state.pak, state.pak.scenes().front(), state.typeImages);
+                    const mmu::PlayerController& pc = typed.controller();
+                    std::snprintf(line, sizeof(line),
+                                  "  megaman object=%s params=%u move_speed=%.0f jump=%.0f level types=%ux%u",
+                                  typed.playerObject() ? "yes" : "no",
+                                  typed.playerObject() ? typed.playerObject()->paramCount : 0u,
+                                  pc.params.moveSpeed, pc.params.jumpVelocity,
+                                  typed.levelTypes().width, typed.levelTypes().height);
+                    state.console.log(line);
+                    check("megaman params from pak",
+                          typed.playerObject() && pc.params.moveSpeed == 90.0f &&
+                          pc.params.jumpVelocity == -325.0f);
+                    check("typed level collision", typed.levelTypes().valid());
+                    if (typed.playerObject()) {
+                        for (const char* anim : {"stand", "run", "jump", "slide", "ladder"}) {
+                            mmu::u32 h = 0;
+                            for (const unsigned char* p = reinterpret_cast<const unsigned char*>(anim); *p; ++p)
+                                for (int b = 7; b >= 0; --b) {
+                                    const bool top = (h & 0x80000000u) != 0;
+                                    h = (h << 1) | ((*p >> b) & 1u);
+                                    if (top) h ^= 0x04c11db7u;
+                                }
+                            const mmu::PackedSprite* sp =
+                                state.pak.animationOf(*typed.playerObject(), h);
+                            std::snprintf(line, sizeof(line),
+                                          "  anim %-7s sprite=%s frames=%u col0=%d handle=(%d,%d)",
+                                          anim, sp ? "yes" : "no", sp ? sp->frameCount : 0u,
+                                          sp && sp->frameCount ? static_cast<int>(sp->frames[0].collisionIndex) : -2,
+                                          sp ? sp->xHandle : 0, sp ? sp->yHandle : 0);
+                            state.console.log(line);
+                        }
+                    }
+                    for (int i = 0; i < 180; ++i) typed.step(1.0f / 60.0f, mmu::PlayerInput{});
+                    const float landY = pc.y;
+                    std::snprintf(line, sizeof(line),
+                                  "  typed idle: state=%s pos=(%.1f,%.1f) contacts=0x%x anim=%08x",
+                                  mmu::playerStateName(pc.state), pc.x, pc.y, pc.contactFlags,
+                                  pc.animKey);
+                    state.console.log(line);
+                    check("typed player lands", pc.state == mmu::PlayerState::Stand);
+                    mmu::PlayerInput right;
+                    right.moveX = 1.0f;
+                    const float x0 = pc.x;
+                    for (int i = 0; i < 60; ++i) typed.step(1.0f / 60.0f, right);
+                    std::snprintf(line, sizeof(line),
+                                  "  typed run: state=%s dx=%.1f dy=%.1f vx=%.0f",
+                                  mmu::playerStateName(pc.state), pc.x - x0, pc.y - landY, pc.vx);
+                    state.console.log(line);
+                    check("typed run uses move_speed",
+                          pc.state == mmu::PlayerState::Run && pc.x - x0 > 70.0f &&
+                          pc.x - x0 < 95.0f);
+                    mmu::PlayerInput jump;
+                    jump.jump = true;
+                    float peak = pc.y;
+                    for (int i = 0; i < 90; ++i) {
+                        typed.step(1.0f / 60.0f, jump);
+                        peak = std::min(peak, pc.y);
+                    }
+                    std::snprintf(line, sizeof(line),
+                                  "  typed jump: rise=%.1f end state=%s", pc.y - peak,
+                                  mmu::playerStateName(pc.state));
+                    state.console.log(line);
+                    // v^2 / 2g = 325^2 / 1980 = 53.3 px for a held jump.
+                    check("typed jump height", pc.y - peak > 45.0f && pc.y - peak < 58.0f);
+                }
 
                 mmu::World ctrlSim;
                 ctrlSim.loadScene(state.pak, state.pak.scenes().front(), state.typeImages);
@@ -7805,6 +7959,10 @@ int main(int argc, char** argv) {
         runtime.discoverPad();
         pollUiInput(state, runtime.pad);
         runtime.tick(state, delta);
+        // Hold the player at the cursor for the whole drag so gravity and the
+        // state machine cannot pull it away between motion events.
+        if (state.uiState.draggingPlayer && state.world.hasScene())
+            state.world.debugPlacePlayer(state.uiState.dragWorldX, state.uiState.dragWorldY);
         state.cutsceneRuntime.update(delta);
         dispatchCutsceneEvents(state);
 
@@ -7820,6 +7978,7 @@ int main(int argc, char** argv) {
                     showAudio = open;
                 state.viewer.open = state.levelViewer.open = state.gameView.open = open;
             }
+            handleDebugDrag(state, window, g_renderer, event, io.WantCaptureMouse);
             if (event.type == SDL_QUIT) state.quit = true;
             if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE &&
                 event.window.windowID == SDL_GetWindowID(window)) state.quit = true;
@@ -7841,19 +8000,25 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
 
         if (state.uiState.menuBarVisible && ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu("MMU")) {
-                ImGui::TextDisabled("DEBUG HARNESS - NOT THE GAME");
-                ImGui::Separator();
-                ImGui::Text("ImGui profile: %s", state.ui.name());
-                ImGui::EndMenu();
-            }
             if (ImGui::BeginMenu("Menu")) {
-                if (ImGui::MenuItem("Quit Game")) state.uiState.quitConfirmOpen = true;
+                ImGui::TextDisabled("DEBUG HARNESS - NOT THE GAME");
+                ImGui::Text("ImGui profile: %s", state.ui.name());
                 ImGui::Separator();
                 if (ImGui::MenuItem("Reset Window Layout")) {
                     state.uiState.windowLayoutPending = kWindowAll;
                     state.console.log("Window layout reset requested");
                 }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Quit Game")) state.uiState.quitConfirmOpen = true;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Debug Tools")) {
+                if (ImGui::MenuItem("Drag Player (Right Mouse)", nullptr,
+                                    &state.uiState.debugDragPlayer) &&
+                    !state.uiState.debugDragPlayer)
+                    state.uiState.draggingPlayer = false;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Right-click and drag in the game view to move the player.");
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
@@ -7885,6 +8050,18 @@ int main(int argc, char** argv) {
         SDL_RenderSetScale(g_renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         renderGame(g_renderer, state, textureCache);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), g_renderer);
+        if (state.quit && !screenshotPath.empty()) {
+            // Headless visual check: dump the final frame before presenting.
+            int w = 0, h = 0;
+            SDL_GetRendererOutputSize(g_renderer, &w, &h);
+            SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+            if (shot && SDL_RenderReadPixels(g_renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
+                                             shot->pixels, shot->pitch) == 0 &&
+                SDL_SaveBMP(shot, screenshotPath.c_str()) == 0)
+                state.console.log("screenshot: " + screenshotPath);
+            if (shot) SDL_FreeSurface(shot);
+            screenshotPath.clear();
+        }
         SDL_RenderPresent(g_renderer);
     }
 

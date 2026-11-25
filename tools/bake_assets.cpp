@@ -1,4 +1,4 @@
-// Offline asset baker: original .mmu protobuf databases -> one flat MMUPAK v5.
+// Offline asset baker: original .mmu protobuf databases -> one flat MMUPAK v6.
 // The runtime never needs protobuf or the original files.
 //
 //   mmu_bake <output.pak> <asset_dir> [file.mmu ...] [--max-images N]
@@ -66,8 +66,10 @@ struct Header {
     u32 gameObjectCount = 0;
     u64 gameObjectTableOffset = 0;
     u64 gameObjectSpriteTableOffset = 0;
-    u64 reserved8 = 0;
-    u64 reserved9 = 0;
+    // v6 extension: guns.mmu GameParams, 12-byte rows grouped by object.
+    u64 gameParamTableOffset = 0;
+    u32 gameParamCount = 0;
+    u32 reserved9 = 0;
 };
 static_assert(sizeof(Header) == kHeaderSize, "MMUPAK header layout");
 
@@ -143,6 +145,12 @@ struct PendingGameObject {
     u32 firstSprite = 0;
     u32 spriteCount = 0;
     std::string name;
+};
+
+struct PendingGameParam {
+    u32 objectIndex = 0;
+    u32 key = 0;
+    float value = 0.0f;
 };
 
 struct PendingGameObjectSprite {
@@ -248,8 +256,10 @@ bool writeArchive(const std::string& path, std::vector<PendingEntry>& entries,
                   std::vector<PendingCutsceneTimestamp>& cutsceneTimestamps,
                   std::vector<PendingCutsceneCommand>& cutsceneCommands,
                   std::vector<PendingGameObject>& gameObjects,
-                  std::vector<PendingGameObjectSprite>& gameObjectSprites) {
+                  std::vector<PendingGameObjectSprite>& gameObjectSprites,
+                  const std::vector<PendingGameParam>& gameParams) {
     Header header;
+    header.gameParamCount = static_cast<u32>(gameParams.size());
     header.entryCount = static_cast<u32>(entries.size());
     header.frameCount = static_cast<u32>(frames.size());
     header.spriteCount = static_cast<u32>(sprites.size());
@@ -310,9 +320,11 @@ bool writeArchive(const std::string& path, std::vector<PendingEntry>& entries,
     header.gameObjectSpriteTableOffset = header.gameObjectTableOffset +
                                          static_cast<u64>(gameObjects.size()) *
                                              kGameObjectSize;
-    header.stringsOffset = header.gameObjectSpriteTableOffset +
-                           static_cast<u64>(gameObjectSprites.size()) *
-                               kGameObjectSpriteSize;
+    header.gameParamTableOffset = header.gameObjectSpriteTableOffset +
+                                  static_cast<u64>(gameObjectSprites.size()) *
+                                      kGameObjectSpriteSize;
+    header.stringsOffset = header.gameParamTableOffset +
+                           static_cast<u64>(gameParams.size()) * 12u;
     header.stringsSize = strings.size();
     header.dataOffset = header.stringsOffset + header.stringsSize;
 
@@ -480,6 +492,16 @@ bool writeArchive(const std::string& path, std::vector<PendingEntry>& entries,
         out.write(reinterpret_cast<const char*>(record.data()), record.size());
     }
 
+    for (const PendingGameParam& param : gameParams) {
+        std::vector<u8> record;
+        putU32(record, param.objectIndex);
+        putU32(record, param.key);
+        u32 bits = 0;
+        std::memcpy(&bits, &param.value, sizeof(bits));
+        putU32(record, bits);
+        out.write(reinterpret_cast<const char*>(record.data()), record.size());
+    }
+
     out.write(reinterpret_cast<const char*>(strings.data()), strings.size());
     out.write(reinterpret_cast<const char*>(blobs.data()), blobs.size());
     return out.good();
@@ -521,6 +543,7 @@ int main(int argc, char** argv) {
     std::vector<PendingCutsceneCommand> cutsceneCommands;
     std::vector<PendingGameObject> gameObjects;
     std::vector<PendingGameObjectSprite> gameObjectSprites;
+    std::vector<PendingGameParam> gameParams;
 
     for (const std::string& filename : files) {
         const std::string path = assetDir + "/" + filename;
@@ -552,7 +575,15 @@ int main(int argc, char** argv) {
                 frames.push_back(packedFrame);
             }
             packedSprite.frameCount = static_cast<u32>(frames.size() - packedSprite.firstFrame);
-            addSurface(entries, sprite.singleCollision, sprite.singleCollisionPath, sprite.key, source);
+            // Frames without their own collision use the sprite-level
+            // single_collision surface; link it explicitly (readers also infer
+            // it for older archives, where it is the next entry).
+            const std::size_t single = addSurface(entries, sprite.singleCollision,
+                                                  sprite.singleCollisionPath, sprite.key, source);
+            if (single != kNoIndex)
+                for (std::size_t f = packedSprite.firstFrame; f < frames.size(); ++f)
+                    if (frames[f].collisionIndex == kNoIndex)
+                        frames[f].collisionIndex = static_cast<u32>(single);
             sprites.push_back(packedSprite);
             spriteRoots.push_back(sprite.resRoot);
         }
@@ -580,6 +611,9 @@ int main(int argc, char** argv) {
             }
             packedObject.spriteCount =
                 static_cast<u32>(gameObjectSprites.size() - packedObject.firstSprite);
+            for (const GameParamAsset& param : object.gameParams)
+                gameParams.push_back(PendingGameParam{
+                    static_cast<u32>(gameObjects.size()), param.key, param.param});
             gameObjects.push_back(std::move(packedObject));
         }
         for (const SceneAsset& scene : db.scenes()) {
@@ -664,6 +698,7 @@ int main(int argc, char** argv) {
             spawns.clear();
             gameObjects.clear();
             gameObjectSprites.clear();
+            gameParams.clear();
             break;
         }
     }
@@ -696,7 +731,7 @@ int main(int argc, char** argv) {
 
     if (!writeArchive(output, entries, frames, sprites, spriteRoots, scenes, spawns,
                       cutscenes, cutsceneTimestamps, cutsceneCommands,
-                      gameObjects, gameObjectSprites)) {
+                      gameObjects, gameObjectSprites, gameParams)) {
         std::fprintf(stderr, "failed to write %s\n", output.c_str());
         return 1;
     }

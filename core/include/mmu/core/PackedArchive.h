@@ -136,6 +136,17 @@ struct PackedGameObject {
     u32 firstSprite = 0;
     u32 spriteCount = 0;
     std::string_view name;
+    // v6: this object's GameParam rows in PackedArchive::gameParams().
+    u32 firstParam = 0;
+    u32 paramCount = 0;
+};
+
+// One guns.mmu GameParam (v6). The key is the MMU 0x43c010 CRC-32 of the
+// parameter name; GameObject::GetParam (0x43c800) does a linear key search
+// and returns 0.0 when the key is absent, which paramOf() reproduces.
+struct PackedGameParam {
+    u32 key = 0;
+    float value = 0.0f;
 };
 
 // guns.mmu stores parallel sprites and spriteKeys arrays. spriteKeys[i] is the
@@ -150,7 +161,7 @@ struct PackedGameObjectSprite {
 class PackedArchive {
 public:
     static constexpr u64 kMagic = 0x024B4150554D4DULL; // "MMUPAK"
-    static constexpr u32 kVersion = 5;                 // v2/v3/v4 archives are still accepted
+    static constexpr u32 kVersion = 6;                 // v2..v5 archives are still accepted
 
     bool load(ByteView bytes);
     void clear();
@@ -179,6 +190,12 @@ public:
     const PackedSprite* findSprite(u32 key) const;
     const PackedScene* findScene(u32 key) const;
     const PackedGameObject* findGameObject(u32 key) const;
+    const std::vector<PackedGameParam>& gameParams() const { return gameParams_; }
+    // GameObject::GetParam semantics (0x43c800): first matching key, else 0.
+    float paramOf(const PackedGameObject& object, u32 key) const;
+    // Animation-name hash -> packed sprite, as the per-object sprite map used
+    // by the original vslot 1 animation lookup. Returns null when absent.
+    const PackedSprite* animationOf(const PackedGameObject& object, u32 animKey) const;
     std::size_t imageCount() const;
     std::string_view stringAt(u32 offset) const;
 
@@ -193,6 +210,7 @@ private:
     std::vector<PackedCutsceneCommand> cutsceneCommands_;
     std::vector<PackedGameObject> gameObjects_;
     std::vector<PackedGameObjectSprite> gameObjectSprites_;
+    std::vector<PackedGameParam> gameParams_;
     ByteView strings_{};
     u32 version_ = 0;
     bool valid_ = false;

@@ -43,7 +43,7 @@ callback, and records calls to the real state setter `0x4405c0` and the global
 cue setter `0x4026b0`. The generated report is `docs/game_flow.txt`:
 
 ```sh
-python3 tools/analyze_game_flow.py /Users/mysterypaint/Downloads/MegaManUnlimited/MMU.exe
+python3 tools/analyze_game_flow.py $HOME/Downloads/MegaManUnlimited/MMU.exe
 ```
 
 The distinction between the two setters matters. Menu classes call
@@ -160,7 +160,7 @@ selects.
 class's state list in the order the game itself registered it:
 
 ```sh
-python3 tools/analyze_state_graph.py /Users/mysterypaint/Downloads/MegaManUnlimited/MMU.exe
+python3 tools/analyze_state_graph.py $HOME/Downloads/MegaManUnlimited/MMU.exe
 ```
 
 1. The registrar `0x401370` is called once per state inside a constructor. The
@@ -613,6 +613,13 @@ destinations or gameplay outcomes. `outro [summary|calls|call <va>|owner <name>|
 lists the generated rows verbatim.
 
 ## Runtime implementation
+
+> **Superseded for MegaMan's movement:** the controller now follows the
+> recovered state callbacks, GameParams and per-pixel collision engine. See
+> `docs/player_reconstruction.md` and `docs/reconstructed_functions.txt`. The
+> paragraphs below describe the earlier harness and still apply to the
+> message handler and the legacy fallback used when a room has no collision
+> image.
 
 `core/PlayerState.{h,cpp}` implements `PlayerController` with these exact state
 names and message IDs. The transition guards mirror the decompiled switch arms.
@@ -1075,7 +1082,7 @@ paths include `..\Menus\Data\MegaBusterIcon.xspr` and
 strings and masks around `0x5b02f0`, `0x5aa470`, `0x5b15d0`, `0x5aea90`,
 `0x5aefc0` and `0x5a7a50` without assigning trigger or duration meanings.
 `playerctl [summary|states|keys|edges|chars|resources|operands|state <name>|key <name>|func <va>]`
-exposes the table. The portable speed/gravity/jump/knockback constants and the
-slide/shoot hooks remain explicitly unverified placeholders; in particular the
-current slide hook follows the `CometDash` early return, so it is not claimed
-as a reconstructed Slide entry.
+exposes the table. Update: speed, gravity, jump, slide and ladder values are
+now read from MegaMan's `guns.mmu` object, and the Slide entry is reconstructed
+from `0x5aa080` (see `docs/player_reconstruction.md`). Shooting (`0x5ad160`)
+is still open.
